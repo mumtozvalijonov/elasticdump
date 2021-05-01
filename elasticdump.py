@@ -72,10 +72,10 @@ class Dumper:
 
 async def main():
     async with Dumper(
-        elastic_address=args.elastic_address, 
-        index=args.index,
-        output_dir=args.output_dir,
-        limit=args.limit) as dumper:
+            elastic_address=args.elastic_address, 
+            index=args.index,
+            output_dir=args.output_dir,
+            limit=args.limit) as dumper:
         await dumper.start()
 
 
