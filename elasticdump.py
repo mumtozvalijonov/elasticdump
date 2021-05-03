@@ -37,13 +37,13 @@ class Dumper:
             await asyncio.gather(
                 mf.write(ujson.dumps(meta['mappings'])),
                 sf.write(ujson.dumps(meta['settings']))
-            )
+            )        
 
     async def dump_data(self):
         count = self.limit or int((await self.es.cat.count(index=self.index)).strip().split()[-1])
         start = 0
         async with aiofiles.open(os.path.join(self.output_dir, 'data.json'), 'w') as f:
-            await f.write('[')
+            write_tasks = []
             while start < count:
                 documents = []
                 tasks = []
@@ -56,14 +56,12 @@ class Dumper:
                         break
                 results = await asyncio.gather(*tasks)
                 for data in results:
-                    documents.extend(data['hits']['hits'])
-                    
-                await f.write(ujson.dumps(documents)[1:-2])
-                if start < count:
-                    await f.write(',')
-                else:
-                    await f.write('}]')
+                    data = list(map(lambda x: f'{ujson.dumps(x)}\n', data['hits']['hits']))
+                    documents.extend(data)
+                write_tasks.append(asyncio.create_task(f.writelines(documents)))
+            await asyncio.wait(write_tasks)
             
+                    
     async def start(self):
         meta_task = asyncio.create_task(self.dump_meta())
         data_task = asyncio.create_task(self.dump_data())

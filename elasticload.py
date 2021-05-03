@@ -58,23 +58,24 @@ class Loader:
 
         mappings = ujson.loads(mappings)
         res = await self.es.indices.create(self.index, body={"settings": settings, "mappings": mappings})
-        self.logger.info('Index created sucessfully' if res.get('acknowledged') else 'Index creation failed')
+        self.logger.info('Index created sucessfully!' if res.get('acknowledged') else 'Index creation failed!')
 
     async def upload_data(self):
         inserts = []
         async with aiofiles.open(os.path.join(self.input_dir, 'data.json'), 'r') as f:
             actions, i = [], 0
-            async for obj in self.ijson_backend.items_async(f, 'item'):
+            async for line in f:
                 i += 1
-                action = {"_index": self.index, "_id": str(obj['_id']), "_source": obj['_source']}
-                actions.append(action)
-                if i%500 == 0:
+                obj = ujson.loads(line)
+                actions.append({"_index": self.index, "_id": str(obj['_id']), "_source": obj['_source']})
+                if not i%500:
                     inserts.append(asyncio.create_task(async_bulk(self.es, deepcopy(actions))))
+                    self.logger.info(f'{i} documents loaded')
                     actions.clear()
         if actions:
             inserts.append(asyncio.create_task(async_bulk(self.es, deepcopy(actions))))
         await asyncio.wait(inserts)
-        self.logger.info('Data upload finished')
+        self.logger.info('Data upload finished!')
 
 
 async def main():
