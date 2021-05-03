@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 import asyncio
 from elasticsearch import AsyncElasticsearch
 import aiofiles
@@ -14,7 +16,7 @@ class Dumper:
         elastic_address: str, 
         index: str, 
         output_dir: str, 
-        chunk_size: int = 500,
+        chunk_size: int,
         limit: Optional[int] = None
     ):
         self.elastic_address = elastic_address
@@ -68,21 +70,24 @@ class Dumper:
         await asyncio.wait([meta_task, data_task])
 
 
-async def main():
+async def main(args):
     async with Dumper(
             elastic_address=args.elastic_address, 
             index=args.index,
             output_dir=args.output_dir,
+            chunk_size=args.chunk_size,
             limit=args.limit) as dumper:
         await dumper.start()
 
 
-if __name__ == '__main__':
+def run():
     parser = argparse.ArgumentParser()
     parser.add_argument('--elastic_address', type=str, required=True)
     parser.add_argument('--index', type=str, required=True)
     parser.add_argument('--output_dir', type=str, required=True)
+    parser.add_argument('--chunk_size', type=int, required=False, default=500,\
+        help='Get `chunk_size` documents from elasticsearch in a single request')
     parser.add_argument('--limit', type=int, required=False, default=None)
     args = parser.parse_args()
 
-    asyncio.run(main())
+    asyncio.run(main(args))

@@ -1,4 +1,3 @@
-import ijson
 import ujson
 import asyncio
 import aiofiles
@@ -18,10 +17,9 @@ class Loader:
         elastic_address: str, 
         index: str, 
         input_dir: str, 
-        chunk_size: int = 500,
+        chunk_size: int,
         limit: Optional[int] = None
     ):
-        self.ijson_backend = ijson.get_backend("yajl2_c")
         self.elastic_address = elastic_address
         self.index = index
         self.input_dir = input_dir
@@ -68,7 +66,9 @@ class Loader:
                 i += 1
                 obj = ujson.loads(line)
                 actions.append({"_index": self.index, "_id": str(obj['_id']), "_source": obj['_source']})
-                if not i%500:
+                if self.limit and i >= self.limit:
+                    break
+                if not i%self.chunk_size:
                     inserts.append(asyncio.create_task(async_bulk(self.es, deepcopy(actions))))
                     self.logger.info(f'{i} documents loaded')
                     actions.clear()
@@ -78,21 +78,24 @@ class Loader:
         self.logger.info('Data upload finished!')
 
 
-async def main():
+async def main(args):
     async with Loader(
             elastic_address=args.elastic_address,
             index=args.index,
             input_dir=args.input_dir,
+            chunk_size=args.chunk_size,
             limit=args.limit) as loader:
         await loader.start()
 
 
-if __name__ == "__main__":
+def run():
     parser = argparse.ArgumentParser()
     parser.add_argument('--elastic_address', type=str, required=True)
     parser.add_argument('--index', type=str, required=True)
     parser.add_argument('--input_dir', type=str, required=True)
     parser.add_argument('--limit', type=int, required=False, default=None)
+    parser.add_argument('--chunk_size', type=int, required=False, default=500,\
+        help='Insert `chunk_size` documents in a single bulk operation')
     args = parser.parse_args()
 
-    asyncio.run(main())
+    asyncio.run(main(args))
