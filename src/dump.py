@@ -7,6 +7,8 @@ from typing import Optional
 import ujson
 import os
 import argparse
+import logging
+import sys
 
 
 class Dumper:
@@ -25,12 +27,17 @@ class Dumper:
         self.chunk_size = chunk_size
         self.limit = limit
 
+        self.logger = logging.getLogger('Dumper')
+        self.logger.setLevel(logging.INFO)
+
     async def __aenter__(self):
         self.es = AsyncElasticsearch(hosts=self.elastic_address)
+        self.logger.addHandler(logging.StreamHandler(sys.stdout))
         return self
 
     async def __aexit__(self, *exc_info):
         await self.es.close()
+        [h.close() for h in self.logger.handlers]
 
     async def dump_meta(self):
         meta = (await self.es.indices.get(self.index))[self.index]
@@ -39,30 +46,51 @@ class Dumper:
             await asyncio.gather(
                 mf.write(ujson.dumps(meta['mappings'])),
                 sf.write(ujson.dumps(meta['settings']))
-            )        
+            )
 
     async def dump_data(self):
         count = self.limit or int((await self.es.cat.count(index=self.index)).strip().split()[-1])
-        start = 0
+
         async with aiofiles.open(os.path.join(self.output_dir, 'data.json'), 'w') as f:
             write_tasks = []
-            while start < count:
-                documents = []
-                tasks = []
-                for _ in range(10):
-                    new_start = min(start + self.chunk_size, count)
-                    size = new_start - start
-                    tasks.append(self.es.search(index=self.index, body={'size': size, 'from': start}))
-                    start = new_start
-                    if start >= count:
-                        break
-                results = await asyncio.gather(*tasks)
-                for data in results:
-                    data = list(map(lambda x: f'{ujson.dumps(x)}\n', data['hits']['hits']))
-                    documents.extend(data)
-                write_tasks.append(asyncio.create_task(f.writelines(documents)))
-            await asyncio.wait(write_tasks)
+
+            dumped_count = 0
+            match_all = {
+                "size": self.chunk_size,
+                "query": {
+                    "match_all": {}
+                }
+            }
+            scroll_response = await self.es.search(index=self.index, body=match_all, scroll='2s')
+
+            # write hits into file
+            num_to_insert = min(self.limit - dumped_count, len(scroll_response['hits']['hits']))\
+                if self.limit else len(scroll_response['hits']['hits'])
+            documents = list(map(lambda x: f'{ujson.dumps(x)}\n',\
+                scroll_response['hits']['hits'][:num_to_insert]))
+            write_tasks.append(asyncio.create_task(f.writelines(documents)))
             
+            # set scroll_id and update `dumped_count`
+            scroll_id = scroll_response['_scroll_id']
+            dumped_count += num_to_insert
+            self.logger.info(f'{dumped_count} documents dumped')
+
+            while dumped_count < count:
+                scroll_response = await self.es.scroll(scroll_id=scroll_id, scroll='2s')
+                # write hits into file
+                num_to_insert = min(self.limit - dumped_count, len(scroll_response['hits']['hits']))\
+                    if self.limit else len(scroll_response['hits']['hits'])
+
+                documents = list(map(lambda x: f'{ujson.dumps(x)}\n',\
+                    scroll_response['hits']['hits'][:num_to_insert]))
+                write_tasks.append(asyncio.create_task(f.writelines(documents)))
+                
+                # set scroll_id and update `dumped_count`
+                scroll_id = scroll_response['_scroll_id']
+                dumped_count += num_to_insert
+
+                self.logger.info(f'{dumped_count} documents dumped')
+            await asyncio.wait(write_tasks)
                     
     async def start(self):
         meta_task = asyncio.create_task(self.dump_meta())
@@ -91,3 +119,7 @@ def run():
     args = parser.parse_args()
 
     asyncio.run(main(args))
+
+
+if __name__ == '__main__':
+    run()

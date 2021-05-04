@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 import ujson
 import asyncio
 import aiofiles
