@@ -52,7 +52,7 @@ class Dumper:
         count = self.limit or int((await self.es.cat.count(index=self.index)).strip().split()[-1])
 
         async with aiofiles.open(os.path.join(self.output_dir, 'data.json'), 'w') as f:
-            write_tasks = []
+            tasks = []
 
             dumped_count = 0
             match_all = {
@@ -68,7 +68,7 @@ class Dumper:
                 if self.limit else len(scroll_response['hits']['hits'])
             documents = list(map(lambda x: f'{ujson.dumps(x)}\n',\
                 scroll_response['hits']['hits'][:num_to_insert]))
-            write_tasks.append(asyncio.create_task(f.writelines(documents)))
+            tasks.append(asyncio.create_task(f.writelines(documents)))
             
             # set scroll_id and update `dumped_count`
             scroll_id = scroll_response['_scroll_id']
@@ -83,14 +83,15 @@ class Dumper:
 
                 documents = list(map(lambda x: f'{ujson.dumps(x)}\n',\
                     scroll_response['hits']['hits'][:num_to_insert]))
-                write_tasks.append(asyncio.create_task(f.writelines(documents)))
+                tasks.append(asyncio.create_task(f.writelines(documents)))
                 
                 # set scroll_id and update `dumped_count`
                 scroll_id = scroll_response['_scroll_id']
                 dumped_count += num_to_insert
 
                 self.logger.info(f'{dumped_count} documents dumped')
-            await asyncio.wait(write_tasks)
+            tasks.append(asyncio.create_task(self.es.clear_scroll(scroll_id=scroll_id)))
+            await asyncio.wait(tasks)
                     
     async def start(self):
         meta_task = asyncio.create_task(self.dump_meta())
